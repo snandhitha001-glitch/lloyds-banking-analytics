@@ -76,6 +76,8 @@ The algorithm comparison is not just due diligence - it surfaces a meaningful fi
 * **PCA** applied to project clusters into 2D - revealed vertical alignment with limited inter-cluster separation, indicating high variance in one principal component but limited discriminatory power across the full feature space.
 * **t-SNE** applied as a complementary view - produced well-separated cluster groupings, confirming that the Hierarchical Clustering structure is real and non-linear in nature.
 
+The contrast between PCA and t-SNE is instructive: PCA's linear projection can obscure cluster quality that actually exists in non-linear feature relationships. The t-SNE result provides stronger visual confirmation that the four segments are genuinely distinct in behavioral terms.
+
 #### Customer Segment Profiles
 Four distinct customer segments were identified and profiled:
 | **Segment** | **Profile** | **Characteristics** |
@@ -83,7 +85,7 @@ Four distinct customer segments were identified and profiled:
 | **Cluster 0** | High-Value Frequent Customers | High balance, moderate-to-high transaction volume, evening activity peak |
 | **Cluster 1** | Moderate Engagement, Low Balance | Average transactions, lower balance, price-sensitive behavior |
 | **Cluster 2** | Low Engagement Customers | Fewer transactions, lower balances, minimal platform activity |
-| **Cluster 3** | Occasional High-Value Spenders | Higher average transaction amounts but lower frequency eveing peak |
+| **Cluster 3** | Occasional High-Value Spenders | Higher average transaction amounts but lower frequency, evening peak |
 
 ### Future Balance Prediction
 **Notebook** Predicting Future Balance Using Machine Learning.ipynb
@@ -103,7 +105,7 @@ Forward-filling balance values by account - rather than across the whole dataset
 
 The `.shift(-1)` approach frames this as a supervised learning probelm: given everything known about a transaction at time *t*, predict the resulting balance at time *t+1*. This is a practical forecasting frame for banking — it mirrors how balance-based product triggers would operate in a live environment, where decisions are made in the moment before the next event occurs.
 
-#### Model Training & Comparison
+#### ML Model Training & Comparison
 Three regression models were trained on an 80/20 train-test split:
 * **Linear Regression** — used as a performance baseline to establish the ceiling of a purely linear explanation.
 * **Random Forest Regressor** (100 estimators) — ensemble method to capture non-linear interactions between balance, amount, and time features.
@@ -115,12 +117,20 @@ The progression from Linear Regression to Random Forest to XGBoost is intentiona
 The XGBoost model was further tuned with 300 estimators, learning rate 0.05, max depth 6, and subsampling of 0.8 — balancing model complexity against overfitting risk. The lower learning rate paired with more estimators allows the model to correct errors more gradually, producing more stable predictions on unseen data.
 
 #### Interpretability — SHAP Analysis
-SHAP values were computed for the tuned XGBoost model to explain the directional contribution of each feature at the individual prediction level. A summary plot was generated to surface which features drive balance movements upward or downward.
-SHAP is particularly important in a banking context — regulatory expectations around model explainability mean that a model producing accurate predictions but offering no interpretable reasoning is difficult to deploy responsibly. SHAP bridges that gap, allowing the analytical output to be communicated transparently to both technical teams and business stakeholders.
+SHAP values were computed for the tuned XGBoost model to explain the directional contribution of each feature at the individual prediction level — critical in a banking context where regulatory expectations increasingly require models to be interpretable, not just accurate.
 
-#### Forecasting
-Final predictions were visualised against actual balances to assess tracking accuracy. The high overlap between the predicted and actual series confirms that the model captures the directional trajectory of balance changes effectively, though the density of the prediction line reflects the high volatility inherent in individual transaction-level forecasting.
-Monthly aggregation was then applied to smooth transaction-level noise and produce a 12-month forward-looking balance forecast per account — a more actionable output for product and planning teams than raw per-transaction predictions.
+#### Time Series Forecasting - ARIMA, SARIMA & ETS
+To extend analysis to a true forward-looking forecast, the balance data was resampled to monthly frequency and tested for stationarity and seasonality before fitting time series models:
+* **Stationarity testing** — ACF and PACF plots generated and an Augmented Dickey-Fuller (ADF) test run to assess whether differencing was required before modelling.
+* **Seasonal decomposition** — trend, seasonality, and residual components isolated to understand the underlying structure of monthly balance behavior before model selection.
+* **ARIMA** — grid search over (p, d, q) parameter combinations using AIC as the selection criterion; the best-fit model produced a flat forecast, confirming ARIMA cannot capture the trend and seasonal variation present in this dataset.
+* **SARIMA** — extended ARIMA with seasonal order parameters, grid-searched across all viable combinations; captured both trend and seasonal components, producing a more realistic forward-looking forecast than ARIMA.
+* **ETS (Holt-Winters Exponential Smoothing)** — fitted with additive trend and seasonality components; produced the best visual fit to observed balance fluctuations, adapting well to recent movements by weighting recent observations more heavily.
+
+The three-model comparison was deliberate — ARIMA's failure to capture trend and seasonality is an informative result, not just a dead end. It confirmed that the balance series has meaningful temporal structure that requires seasonal modelling, and that ETS's adaptive weighting makes it the most suitable approach for a dataset with irregular fluctuations.
+
+**Final 12-Month Forecast**
+The ETS model was used to generate a 12-month forward-looking balance forecast, visualised against observed historical data. The forecast closely tracks the directional trajectory of balance movement, though it smooths out extreme short-term volatility — an expected trade-off when producing monthly-level planning outputs from a transaction-level dataset.
 
 ### Key Insights
 * **Hierarchical Clustering outperformed all other methods tested**, achieving a Silhouette Score of 0.558 and a Davies-Bouldin Index of 0.509 — confirming that customer behavioral segments in this dataset have a nested, hierarchical structure that K-Means, DBSCAN, and GMM could not capture. The algorithm comparison was not just procedural; it revealed something meaningful about the nature of the data.
@@ -129,6 +139,31 @@ Monthly aggregation was then applied to smooth transaction-level noise and produ
 * **Current balance is the dominant predictor of future balance**, contributing the highest SHAP importance scores in the forecasting model by a significant margin. This reflects strong autocorrelation in account trajectories — a customer's balance today is the most reliable signal of their balance tomorrow, with direct implications for how balance-based product triggers should be designed.
 * **Transaction amount has limited standalone predictive power** for balance forecasting. As a single point-in-time value rather than an aggregated behavioral measure, it does not carry sufficient signal on its own. Models built around cumulative spend patterns or rolling averages would likely improve on this in a production setting.
 * **Temporal features contribute marginally but meaningfully** to balance prediction, capturing seasonal and intra-day spending cycles — payroll timing, weekend behavior, end-of-month pressure — that matter at the portfolio level even if their per-prediction impact is small.
+
+### Model Performance Summary
+#### Customer Segmentation - Clustering Comparison
+| **Algorithm** | **Silhouette Score ↑** | **Davies-Bouldin Index ↓** | **Outcome** |
+|---------------|-----------------------|----------------------------|-------------|
+| **K-Means** | -0.09 | 46.64 | Poor fit |
+| **DBSCAN** | Failed | Failed | Not suitable |
+| **GMM** | -0.06 | 44.73 | Poor fit |
+| **Hierarchical Clustering** | **0.558** | **0.509** | **Best — selected** |
+
+#### Time Series Forecasting — Model Comparison
+| **Model** | **Performance** | **Strengths** | **Outcome**|
+|-----------|-----------------|---------------|------------|
+| **ARIMA** | Poor — flat forecast | Works for stationary series | Cannot handle trend or seasonality |
+| **SARIMA** | Good | Captures trend & seasonal components | Better fit, needs sufficient data | 
+| **ETS** | **Best** | **Adapts well to fluctuations, weights recent data** | **Selected for 12-month forecast** |
+
+| **Model** | **MAE** | **MSE** | **RMSE** | **R²** |
+|-----------|---------|---------|----------|--------|
+| **Linear Regression** | 729.48 | 1,549,730.62 | 1,244.88 | 0.8306 |
+| **Random Forest** | 680.00 | 1,211,531.94 | 1,100.70 | 0.8676 |
+| **XGBoost (Initial)** | 643.54 | 1,141,166.78 | 1,068.25 | 0.8753 |
+| **XGBoost (Tuned)** | **646.22** | **1,136,706.68** | **1,066.16** | **0.8758** | 
+
+The tuned XGBoost model achieved the strongest overall forecasting performance, explaining approximately 88% of the variance in future account balances. MSE and RMSE improvements over the initial XGBoost confirm that tuning reduced extreme prediction errors, though the marginal MAE increase reflects a minor trade-off in average absolute error.
 
 ### Decision Support Use Cases
 This analysis enables stakeholders to:
@@ -141,7 +176,9 @@ This analysis enables stakeholders to:
 
 ### Tools & Technology
 * **Python** (Pandas, NumPy, Matplotlib, Seaborn, Scikit-learn)
-* **Machine Learning**
+* **Machine Learning Models**
+* **Statsmodels** (ARIMA, SARIMA, ETS)
+* **SHAP**
 * **Jupyter Notebook**
 * **Git & GitHub**
 
